@@ -36,7 +36,16 @@ function SortableItem({
 }) {
   const longPressTimer = useRef(null);
   const isSelected = selectedItemId === item.id;
+  const isEditing = editingItemId === item.id;
   
+  // Add useEffect to handle focus when editing starts
+  useEffect(() => {
+    if (isEditing && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [isEditing, editInputRef]);
+
   const {
     attributes,
     listeners,
@@ -46,20 +55,18 @@ function SortableItem({
     isDragging,
   } = useSortable({ 
     id: item.id,
-    disabled: editingItemId === item.id
+    disabled: isEditing
   });
 
   const handleMouseDown = (e) => {
-    // Prevent handling if clicking delete button or in edit mode
-    if (e.target.closest('.delete-item') || editingItemId) {
+    if (e.target.closest('.delete-item') || isEditing) {
       return;
     }
-
     onItemClick(item.id);
   };
 
   const handleTouchStart = (e) => {
-    if (editingItemId) return;
+    if (isEditing) return;
     
     longPressTimer.current = setTimeout(() => {
       onLongPress(item);
@@ -101,7 +108,7 @@ function SortableItem({
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchEnd}
       >
-        {editingItemId === item.id ? (
+        {isEditing ? (
           <form 
             className="edit-form"
             onSubmit={(e) => {
@@ -144,13 +151,20 @@ const ListTab = React.memo(({ list, isActive, onActivate, onDelete, onNameChange
   const inputRef = useRef(null);
   const longPressTimer = useRef(null);
 
+  // Add useEffect to handle focus when editing starts
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
   const handleTouchStart = (e) => {
     if (isEditing) return;
     
     longPressTimer.current = setTimeout(() => {
       setIsEditing(true);
       setEditName(list.name);
-      setTimeout(() => inputRef.current?.focus(), 50);
     }, LONG_PRESS_DURATION);
   };
 
@@ -262,6 +276,18 @@ function App() {
     }
   }, [lists, activeList]);
 
+  // Add useEffect for input focus
+  useEffect(() => {
+    if (editingItemId && editInputRef.current) {
+      const input = editInputRef.current;
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+    }
+  }, [editingItemId]);
+
   const handleAddListClick = () => {
     const newList = {
       id: Date.now(),
@@ -332,7 +358,6 @@ function App() {
       lastTap.current = null;
     } else {
       // Single tap - select item
-      console.log(itemId);
       setSelectedItemId(itemId);
       lastTap.current = now;
     }
@@ -341,7 +366,6 @@ function App() {
   const handleItemLongPress = (item) => {
     setEditingItemId(item.id);
     setEditingText(item.name);
-    setTimeout(() => editInputRef.current?.focus(), 50);
   };
 
   const handleEditSave = (itemId) => {
