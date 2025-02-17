@@ -14,16 +14,12 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import useLocalStorage from './hooks/useLocalStorage';
 import './App.css';
 
 // Constants
 const DOUBLE_TAP_DELAY = 300; // milliseconds between taps
 const LONG_PRESS_DURATION = 500; // milliseconds for long press
-const DELETE_THRESHOLD = 200;
-const SHOW_DELETE_THRESHOLD = 100;
-const REVEAL_THRESHOLD = 80; // pixels to reveal delete button
 
 // Sortable item component
 function SortableItem({ 
@@ -39,6 +35,7 @@ function SortableItem({
   onDeleteItem
 }) {
   const longPressTimer = useRef(null);
+  const isSelected = selectedItemId === item.id;
   
   const {
     attributes,
@@ -49,8 +46,17 @@ function SortableItem({
     isDragging,
   } = useSortable({ 
     id: item.id,
-    disabled: editingItemId === item.id // Disable dragging while editing
+    disabled: editingItemId === item.id
   });
+
+  const handleMouseDown = (e) => {
+    // Prevent handling if clicking delete button or in edit mode
+    if (e.target.closest('.delete-item') || editingItemId) {
+      return;
+    }
+
+    onItemClick(item.id);
+  };
 
   const handleTouchStart = (e) => {
     if (editingItemId) return;
@@ -66,8 +72,13 @@ function SortableItem({
     }
   };
 
+  const handleDeleteClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onDeleteItem(item.id);
+  };
+
   const style = {
-    // Only use the Y transform value, ignore X
     transform: transform ? `translate3d(0px, ${transform.y}px, 0)` : undefined,
     transition,
     textDecoration: item.completed ? 'line-through' : 'none'
@@ -77,7 +88,7 @@ function SortableItem({
     <li
       ref={setNodeRef}
       className={`list-item 
-        ${selectedItemId === item.id ? 'selected' : ''} 
+        ${isSelected ? 'selected' : ''} 
         ${isDragging ? 'dragging' : ''}`}
       style={style}
       {...attributes}
@@ -85,64 +96,136 @@ function SortableItem({
     >
       <div 
         className="item-content"
-        onClick={() => !editingItemId && onItemClick(item.id)}
+        onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchEnd}
         onTouchEnd={handleTouchEnd}
-        onMouseDown={handleTouchStart}
-        onMouseUp={handleTouchEnd}
-        onMouseLeave={handleTouchEnd}
+        onTouchMove={handleTouchEnd}
       >
         {editingItemId === item.id ? (
-          <>
-            <form 
-              className="edit-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleEditSave(item.id);
-              }}
-              onClick={e => e.stopPropagation()}
-            >
-              <input
-                ref={editInputRef}
-                type="text"
-                value={editingText}
-                onChange={(e) => setEditingText(e.target.value)}
-                onBlur={() => handleEditSave(item.id)}
-                className="edit-input"
-              />
-            </form>
-            <button 
-              className="delete-item"
-              onClick={() => onDeleteItem(item.id)}
-              aria-label="Delete item"
-            >
-              ×
-            </button>
-          </>
+          <form 
+            className="edit-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleEditSave(item.id);
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <input
+              ref={editInputRef}
+              type="text"
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              onBlur={() => handleEditSave(item.id)}
+              className="edit-input"
+            />
+          </form>
         ) : (
-          <span className="item-name">{item.name}</span>
+          <div className="item-content-inner">
+            <span className="item-name">{item.name}</span>
+            {isSelected && (
+              <button 
+                className="delete-item"
+                onClick={handleDeleteClick}
+                aria-label="Delete item"
+              >
+                ×
+              </button>
+            )}
+          </div>
         )}
       </div>
     </li>
   );
 }
 
+const ListTab = React.memo(({ list, isActive, onActivate, onDelete, onNameChange }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(list.name);
+  const inputRef = useRef(null);
+  const longPressTimer = useRef(null);
+
+  const handleTouchStart = (e) => {
+    if (isEditing) return;
+    
+    longPressTimer.current = setTimeout(() => {
+      setIsEditing(true);
+      setEditName(list.name);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }, LONG_PRESS_DURATION);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+    }
+  };
+
+  const handleSave = () => {
+    if (editName.trim() && editName !== list.name) {
+      onNameChange(list.id, editName.trim());
+    }
+    setIsEditing(false);
+  };
+
+  return (
+    <button
+      className={`tab ${isActive ? 'active' : ''}`}
+      onClick={() => !isEditing && onActivate(list.id)}
+    >
+      {isEditing ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleSave();
+          }}
+          className="list-edit-form"
+          onClick={e => e.stopPropagation()}
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            onBlur={handleSave}
+            className="list-edit-input"
+          />
+        </form>
+      ) : (
+        <span
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          onTouchMove={handleTouchEnd}
+          onMouseDown={handleTouchStart}
+          onMouseUp={handleTouchEnd}
+          onMouseLeave={handleTouchEnd}
+          className="list-name"
+        >
+          {list.name}
+        </span>
+      )}
+      <button
+        className="delete-list"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(list.id);
+        }}
+      >
+        ×
+      </button>
+    </button>
+  );
+});
+
 function App() {
   const [lists, setLists] = useLocalStorage('shopping-lists', []);
-  const [newListName, setNewListName] = useState('');
-  const [newItem, setNewItem] = useState('');
   const [activeList, setActiveList] = useState(null);
   const [listToDelete, setListToDelete] = useState(null);
   const [selectedItemId, setSelectedItemId] = useState(null);
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingText, setEditingText] = useState('');
   const [showInstructions, setShowInstructions] = useLocalStorage('show-instructions', true);
-  const [editingListId, setEditingListId] = useState(null);
-  const [editingListName, setEditingListName] = useState('');
-
   const editInputRef = useRef(null);
-  const editListInputRef = useRef(null);
   const lastTap = useRef(null);
 
   const sensors = useSensors(
@@ -152,6 +235,20 @@ function App() {
         delay: 100,
         tolerance: 5,
       },
+      // Only start drag on primary button
+      buttons: [0],
+      // Make sure we don't interfere with normal clicks
+      modifiers: {
+        // Cancel the drag if movement is minimal
+        cancelDrag: ({ movement: { x, y }, events }) => {
+          const distance = Math.sqrt(x * x + y * y);
+          if (distance < 5) {
+            // Allow click to propagate
+            return true;
+          }
+          return false;
+        }
+      }
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
@@ -175,56 +272,6 @@ function App() {
     setActiveList(newList.id);
   };
 
-  const addItem = (e) => {
-    e.preventDefault();
-    if (!newItem.trim() || activeList === null) return;
-
-    const updatedLists = lists.map(list => {
-      if (list.id === activeList) {
-        return {
-          ...list,
-          items: [...list.items, {
-            id: Date.now(),
-            name: newItem,
-            completed: false
-          }]
-        };
-      }
-      return list;
-    });
-
-    setLists(updatedLists);
-    setNewItem('');
-  };
-
-  const toggleItem = (itemId) => {
-    const updatedLists = lists.map(list => {
-      if (list.id === activeList) {
-        return {
-          ...list,
-          items: list.items.map(item => {
-            if (item.id === itemId) {
-              return { ...item, completed: !item.completed };
-            }
-            return item;
-          })
-        };
-      }
-      return list;
-    });
-
-    setLists(updatedLists);
-  };
-
-  const handleDeleteConfirm = (confirmed) => {
-    if (confirmed) {
-      setLists(lists.filter(list => list.id !== listToDelete));
-      if (activeList === listToDelete) {
-        setActiveList(lists.length > 1 ? lists[0].id : null);
-      }
-    }
-    setListToDelete(null);
-  };
 
   const handleDeleteItem = (itemId) => {
     const updatedLists = lists.map(list => {
@@ -242,6 +289,8 @@ function App() {
 
   const handleDragEnd = (event) => {
     const { active, over } = event;
+    
+    if (!active || !over) return;
     
     if (active.id !== over.id) {
       const updatedLists = lists.map(list => {
@@ -263,12 +312,28 @@ function App() {
 
   const handleItemClick = (itemId) => {
     const now = Date.now();
+    
     if (lastTap.current && (now - lastTap.current) < DOUBLE_TAP_DELAY) {
-      toggleItem(itemId);
+      // Double tap - complete item
+      const updatedLists = lists.map(list => {
+        if (list.id === activeList) {
+          return {
+            ...list,
+            items: list.items.map(item => 
+              item.id === itemId 
+                ? { ...item, completed: !item.completed }
+                : item
+            )
+          };
+        }
+        return list;
+      });
+      setLists(updatedLists);
       lastTap.current = null;
-      setSelectedItemId(null);
     } else {
-      setSelectedItemId(selectedItemId === itemId ? null : itemId);
+      // Single tap - select item
+      console.log(itemId);
+      setSelectedItemId(itemId);
       lastTap.current = now;
     }
   };
@@ -301,102 +366,28 @@ function App() {
     setEditingText('');
   };
 
-  const handleListEditSave = (listId) => {
-    if (editingListName.trim()) {
-      const updatedLists = lists.map(list => {
-        if (list.id === listId) {
-          return { ...list, name: editingListName.trim() };
-        }
-        return list;
-      });
-      setLists(updatedLists);
-    }
-    setEditingListId(null);
-    setEditingListName('');
+  const handleListNameChange = (listId, newName) => {
+    const updatedLists = lists.map(list => 
+      list.id === listId ? { ...list, name: newName } : list
+    );
+    setLists(updatedLists);
   };
-
-  const activeListData = lists.find(list => list.id === activeList);
 
   return (
     <div className="container">
       <h1>Shopping Lists</h1>
       
       <div className="lists-tabs">
-        {lists.map(list => {
-          const isEditing = editingListId === list.id;
-          const ListNameContent = () => {
-            const longPressTimer = useRef(null);
-
-            const handleTouchStart = (e) => {
-              longPressTimer.current = setTimeout(() => {
-                setEditingListId(list.id);
-                setEditingListName(list.name);
-                setTimeout(() => editListInputRef.current?.focus(), 50);
-              }, LONG_PRESS_DURATION);
-            };
-
-            const handleTouchEnd = () => {
-              if (longPressTimer.current) {
-                clearTimeout(longPressTimer.current);
-              }
-            };
-
-            if (isEditing) {
-              return (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleListEditSave(list.id);
-                  }}
-                  className="list-edit-form"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <input
-                    ref={editListInputRef}
-                    type="text"
-                    value={editingListName}
-                    onChange={(e) => setEditingListName(e.target.value)}
-                    onBlur={() => handleListEditSave(list.id)}
-                    className="list-edit-input"
-                  />
-                </form>
-              );
-            }
-
-            return (
-              <span
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                onTouchMove={handleTouchEnd}
-                onMouseDown={handleTouchStart}
-                onMouseUp={handleTouchEnd}
-                onMouseLeave={handleTouchEnd}
-                className="list-name"
-              >
-                {list.name}
-              </span>
-            );
-          };
-
-          return (
-            <button
-              key={list.id}
-              className={`tab ${activeList === list.id ? 'active' : ''}`}
-              onClick={() => !isEditing && setActiveList(list.id)}
-            >
-              <ListNameContent />
-              <button
-                className="delete-list"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setListToDelete(list.id);
-                }}
-              >
-                ×
-              </button>
-            </button>
-          );
-        })}
+        {lists.map(list => (
+          <ListTab
+            key={list.id}
+            list={list}
+            isActive={activeList === list.id}
+            onActivate={setActiveList}
+            onDelete={setListToDelete}
+            onNameChange={handleListNameChange}
+          />
+        ))}
         <button 
           className="tab new-list-tab"
           onClick={handleAddListClick}
@@ -406,7 +397,7 @@ function App() {
         </button>
       </div>
 
-      {activeList && activeListData && (
+      {activeList && lists.find(list => list.id === activeList) && (
         <div className="active-list">
           <DndContext
             sensors={sensors}
@@ -414,11 +405,11 @@ function App() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={activeListData.items.map(item => item.id)}
+              items={lists.find(list => list.id === activeList).items.map(item => item.id)}
               strategy={verticalListSortingStrategy}
             >
               <ul className="items-list">
-                {activeListData.items.map((item) => (
+                {lists.find(list => list.id === activeList).items.map((item) => (
                   <SortableItem
                     key={item.id}
                     item={item}
